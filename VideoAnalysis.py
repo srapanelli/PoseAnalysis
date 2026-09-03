@@ -6,6 +6,10 @@ from tkinter import filedialog, messagebox
 
 from process import process_video
 
+from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
+from matplotlib.figure import Figure
+import numpy as np
+
 
 DATA_PATH = Path(__file__).resolve().parent / "recordings"
 
@@ -78,6 +82,55 @@ def angle_between(a: tuple[float, float], b: tuple[float, float], c: tuple[float
     return math.degrees(math.acos(cosang))
 
 
+class AnglePlotWindow(ctk.CTkToplevel):
+    def __init__(self, master, angle_values: list[float], triplet: tuple[int, int, int]):
+        super().__init__(master)
+        self.master_app = master
+        self.triplet = triplet
+        self.title(f"Angle plot: 12 - 24 - 26")
+        self.geometry("900x420")
+
+        self.figure = Figure(figsize=(8.5, 3.8), dpi=100)
+        self.axis = self.figure.add_subplot(111)
+        self.axis.set_title(f"Angle over time: 12 - 24 - 26")
+        self.axis.set_xlabel("Frame")
+        self.axis.set_ylabel("Angle (deg)")
+        self.axis.grid(True, alpha=0.25)
+
+        x_values = list(range(len(angle_values)))
+        y_values = [value if value is not None and not math.isnan(value) else np.nan for value in angle_values]
+        self.axis.plot(x_values, y_values, color="#227CF1FF", linewidth=2)
+        self.current_marker, = self.axis.plot([], [], marker="o", markersize=8, color="#FF6B6B")
+
+        self.canvas = FigureCanvasTkAgg(self.figure, master=self)
+        self.canvas.get_tk_widget().pack(fill="both", expand=True)
+        self.canvas.draw()
+
+        self._set_current_index(0, angle_values)
+
+    def _close(self):
+        if hasattr(self.master_app, "angle_plot_window"):
+            self.master_app.angle_plot_window = None
+        self.destroy()
+
+    def _set_current_index(self, index: int, angle_values: list[float]):
+        if not angle_values or not (0 <= index < len(angle_values)):
+            self.current_marker.set_data([], [])
+            self.canvas.draw_idle()
+            return
+
+        angle_value = angle_values[index]
+        if angle_value is None or math.isnan(angle_value):
+            self.current_marker.set_data([], [])
+        else:
+            self.current_marker.set_data([index], [angle_value])
+        self.canvas.draw_idle()
+
+    def update_current_index(self, index: int, angle_values: list[float]):
+        if self.winfo_exists():
+            self._set_current_index(index, angle_values)
+
+
 class PoseAnalysisApp(ctk.CTk):
     def __init__(self):
         super().__init__()
@@ -99,7 +152,9 @@ class PoseAnalysisApp(ctk.CTk):
         self._pan_origin_x = 0.0
         self._pan_origin_y = 0.0
         self.zoom = 1.0
-
+        self.angle_triplet = (12, 24, 26)
+        self.angle_series: list[float] = []
+        self.angle_plot_window: AnglePlotWindow | None = None # can also accept none type
         self.grid_columnconfigure(0, weight=0)
         self.grid_columnconfigure(1, weight=1)
         self.grid_rowconfigure(0, weight=1)
@@ -226,7 +281,7 @@ class PoseAnalysisApp(ctk.CTk):
 
     def show_placeholder(self):
         self.canvas.delete("all")
-        self.canvas.configure(bg="#E2E2E2")
+        self.canvas.configure(bg="#202020")
 
     def upload_video(self):
         path = filedialog.askopenfilename(
@@ -256,6 +311,11 @@ class PoseAnalysisApp(ctk.CTk):
 
         self.recording_path = recording_path
         self.frames = frames
+
+        self.angle_series = self.build_angle_series()
+        self.open_angle_plot_window()
+
+
         self.current_index = 0
         self.is_playing = False
         self.zoom = 1.0
@@ -273,24 +333,33 @@ class PoseAnalysisApp(ctk.CTk):
         self.status_label.configure(text=f"Status: loaded {recording_path.name}")
         self.file_label.configure(text=f"Selected recording:\n{recording_path}")
 
+    def build_angle_series(self) -> list[float]: #create list used for plotting
+        angle_values: list[float] = []
+        a_index, b_index, c_index = self.angle_triplet
+
+        for frame in self.frames:
+            points = get_landmark_points(frame)
+            if a_index < len(points) and b_index < len(points) and c_index < len(points):
+                angle_values.append(angle_between(points[a_index], points[b_index], points[c_index]))
+            else:
+                angle_values.append(np.nan) # if missing data doesnt assign value
+
+        return angle_values
+
+    def open_angle_plot_window(self):
+        if not self.angle_series:
+            return
+
+        self.angle_plot_window = AnglePlotWindow(self, self.angle_series, self.angle_triplet)
+        self.angle_plot_window.lift()
+        self.angle_plot_window.focus_force()
+
     def on_frame_change(self, value):
         if not self.frames:
             return
         index = int(round(float(value)))
         self.current_index = index
         self.draw_frame(index)
-
-    def prev_frame(self):
-        if not self.frames:
-            return
-        index = max(0, self.current_index - 1)
-        self.frame_slider.set(index)
-
-    def next_frame(self):
-        if not self.frames:
-            return
-        index = min(len(self.frames) - 1, self.current_index + 1)
-        self.frame_slider.set(index)
 
     def toggle_play(self):
         if not self.frames:
@@ -408,9 +477,9 @@ class PoseAnalysisApp(ctk.CTk):
                 angle_value = angle_between(a, b, c)
                 if not math.isnan(angle_value):
                     angles_info.append((a_index, b_index, c_index, angle_value))
-                    self.canvas.create_line(a[0], a[1], b[0], b[1], fill="#ff7b7b", width=2)
-                    self.canvas.create_line(b[0], b[1], c[0], c[1], fill="#ff7b7b", width=2)
-                    self.canvas.create_line(c[0], c[1], a[0], a[1], fill="#ff7b7b", width=1, dash=(3, 5))
+                    self.canvas.create_line(a[0], a[1], b[0], b[1], fill="#a7daf7", width=2)
+                    self.canvas.create_line(b[0], b[1], c[0], c[1], fill="#a7daf7", width=2)
+                    self.canvas.create_line(c[0], c[1], a[0], a[1], fill="#a7daf7", width=1, dash=(3, 5))
                     self.canvas.create_text(
                         b[0] + 12,
                         b[1] - 12,
@@ -427,6 +496,11 @@ class PoseAnalysisApp(ctk.CTk):
         else:
             self.angles_box.insert("end", "No angles available for this frame.\n")
         self.angles_box.configure(state="disabled")
+
+        if self.angle_plot_window is not None and self.angle_plot_window.winfo_exists():
+            self.angle_plot_window.update_current_index(index, self.angle_series)
+        elif self.angle_plot_window is not None:
+            self.angle_plot_window = None
 
 
 if __name__ == "__main__":

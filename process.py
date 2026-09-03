@@ -38,6 +38,8 @@ def process_video(video_filepath: Path | str, output_dir: Path | str = RECORDING
         fps = cap.get(cv2.CAP_PROP_FPS)
 
         frame_index = 0
+
+        print("Processing Video...")
         while True:
             ret, frame = cap.read()
             if not ret:
@@ -65,6 +67,5 @@ def process_video(video_filepath: Path | str, output_dir: Path | str = RECORDING
     with output_path.open("w", encoding="utf-8") as file_handle:
         json.dump(frames, file_handle, indent=2)
 
+    print("Processing Finished")
     return output_path
-
-        
