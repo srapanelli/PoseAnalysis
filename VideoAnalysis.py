@@ -83,16 +83,18 @@ def angle_between(a: tuple[float, float], b: tuple[float, float], c: tuple[float
 
 
 class AnglePlotWindow(ctk.CTkToplevel):
-    def __init__(self, master, angle_values: list[float], triplet: tuple[int, int, int]):
+    def __init__(self, master, angle_values: list[float], triplet: tuple[int, int, int], window_attribute: str):
         super().__init__(master)
         self.master_app = master
         self.triplet = triplet
-        self.title(f"Angle plot: 12 - 24 - 26")
+        self.window_attribute = window_attribute
+        triplet_text = " - ".join(str(index) for index in triplet)
+        self.title(f"Angle plot: {triplet_text}")
         self.geometry("900x420")
 
         self.figure = Figure(figsize=(8.5, 3.8), dpi=100)
         self.axis = self.figure.add_subplot(111)
-        self.axis.set_title(f"Angle over time: 12 - 24 - 26")
+        self.axis.set_title(f"Angle over time: {triplet_text}")
         self.axis.set_xlabel("Frame")
         self.axis.set_ylabel("Angle (deg)")
         self.axis.grid(True, alpha=0.25)
@@ -109,8 +111,8 @@ class AnglePlotWindow(ctk.CTkToplevel):
         self._set_current_index(0, angle_values)
 
     def _close(self):
-        if hasattr(self.master_app, "angle_plot_window"):
-            self.master_app.angle_plot_window = None
+        if hasattr(self.master_app, self.window_attribute):
+            setattr(self.master_app, self.window_attribute, None)
         self.destroy()
 
     def _set_current_index(self, index: int, angle_values: list[float]):
@@ -153,8 +155,11 @@ class PoseAnalysisApp(ctk.CTk):
         self._pan_origin_y = 0.0
         self.zoom = 1.0
         self.angle_triplet = (12, 24, 26)
+        self.angle_triplet2 = (11, 13, 15)
         self.angle_series: list[float] = []
-        self.angle_plot_window: AnglePlotWindow | None = None # can also accept none type
+        self.angle_series2: list[float] = []
+        self.angle_plot_window: AnglePlotWindow | None = None
+        self.angle_plot_window2: AnglePlotWindow | None = None
         self.grid_columnconfigure(0, weight=0)
         self.grid_columnconfigure(1, weight=1)
         self.grid_rowconfigure(0, weight=1)
@@ -313,8 +318,8 @@ class PoseAnalysisApp(ctk.CTk):
         self.frames = frames
 
         self.angle_series = self.build_angle_series()
-        self.open_angle_plot_window()
-
+        self.angle_series2 = self.build_angle_series2()
+        self.open_angle_plot_windows()
 
         self.current_index = 0
         self.is_playing = False
@@ -346,13 +351,33 @@ class PoseAnalysisApp(ctk.CTk):
 
         return angle_values
 
-    def open_angle_plot_window(self):
-        if not self.angle_series:
-            return
+    def build_angle_series2(self) -> list[float]: #create list used for plotting
+        angle_values: list[float] = []
+        a_index, b_index, c_index = self.angle_triplet2
 
-        self.angle_plot_window = AnglePlotWindow(self, self.angle_series, self.angle_triplet)
-        self.angle_plot_window.lift()
-        self.angle_plot_window.focus_force()
+        for frame in self.frames:
+            points = get_landmark_points(frame)
+            if a_index < len(points) and b_index < len(points) and c_index < len(points):
+                angle_values.append(angle_between(points[a_index], points[b_index], points[c_index]))
+            else:
+                angle_values.append(np.nan) # if missing data doesnt assign value
+
+        return angle_values
+
+    def open_angle_plot_windows(self):
+        if self.angle_series:
+            self.angle_plot_window = AnglePlotWindow(
+                self, self.angle_series, self.angle_triplet, "angle_plot_window"
+            )
+            self.angle_plot_window.lift()
+            self.angle_plot_window.focus_force()
+
+        if self.angle_series2:
+            self.angle_plot_window2 = AnglePlotWindow(
+                self, self.angle_series2, self.angle_triplet2, "angle_plot_window2"
+            )
+            self.angle_plot_window2.geometry("900x420+50+500")
+            self.angle_plot_window2.lift()
 
     def on_frame_change(self, value):
         if not self.frames:
@@ -501,6 +526,11 @@ class PoseAnalysisApp(ctk.CTk):
             self.angle_plot_window.update_current_index(index, self.angle_series)
         elif self.angle_plot_window is not None:
             self.angle_plot_window = None
+
+        if self.angle_plot_window2 is not None and self.angle_plot_window2.winfo_exists():
+            self.angle_plot_window2.update_current_index(index, self.angle_series2)
+        elif self.angle_plot_window2 is not None:
+            self.angle_plot_window2 = None
 
 
 if __name__ == "__main__":
